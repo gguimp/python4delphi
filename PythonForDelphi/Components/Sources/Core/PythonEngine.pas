@@ -1678,6 +1678,7 @@ type
     PyInt_FromLong:     function( x: LongInt):PPyObject; cdecl;
     PyArg_Parse:        function( args: PPyObject; format: PAnsiChar {;....}) :  Integer; cdecl varargs;
     PyArg_ParseTuple:   function( args: PPyObject; format: PAnsiChar {;...}): Integer; cdecl varargs;
+    PyArg_ParseTupleAndKeywords: function(arg, kwdict: PPyObject; format: PAnsiChar; kwlist: PPAnsiChar {;...}): Integer; cdecl varargs;
     Py_BuildValue:      function( format: PAnsiChar {;...}): PPyObject; cdecl varargs;
     Py_Initialize:      procedure; cdecl;
     Py_Exit:            procedure( RetVal: Integer); cdecl;
@@ -3736,6 +3737,7 @@ begin
     PyInt_FromLong          := Import('PyInt_FromLong');
   PyArg_Parse               := Import('PyArg_Parse');
   PyArg_ParseTuple          := Import('PyArg_ParseTuple');
+  PyArg_ParseTupleAndKeywords := Import('PyArg_ParseTupleAndKeywords');
   Py_BuildValue             := Import('Py_BuildValue');
   Py_Initialize             := Import('Py_Initialize');
   PyDict_New                := Import('PyDict_New');
@@ -8371,7 +8373,11 @@ end;
 
 procedure FreeSubtypeInst(ob:PPyObject);
 begin
-  GetPythonEngine.PyObject_Free(ob);
+  try
+    GetPythonEngine.PyObject_Free(ob);
+  except
+    ; // rlc: Engine may have finalized externally
+  end;
 end;
 
 
