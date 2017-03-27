@@ -1697,6 +1697,7 @@ type
     PyInt_FromLong:     function( x: LongInt):PPyObject; cdecl;
     PyArg_Parse:        function( args: PPyObject; format: PAnsiChar {;....}) :  Integer; cdecl varargs;
     PyArg_ParseTuple:   function( args: PPyObject; format: PAnsiChar {;...}): Integer; cdecl varargs;
+    PyArg_ParseTupleAndKeywords: function(arg, kwdict: PPyObject; format: PAnsiChar; kwlist: PPAnsiChar {;...}): Integer; cdecl varargs;
     Py_BuildValue:      function( format: PAnsiChar {;...}): PPyObject; cdecl varargs;
     Py_Initialize:      procedure; cdecl;
     Py_Exit:            procedure( RetVal: Integer); cdecl;
@@ -3789,6 +3790,7 @@ begin
     PyInt_FromLong          := Import('PyInt_FromLong');
   PyArg_Parse               := Import('PyArg_Parse');
   PyArg_ParseTuple          := Import('PyArg_ParseTuple');
+  PyArg_ParseTupleAndKeywords := Import('PyArg_ParseTupleAndKeywords');
   Py_BuildValue             := Import('Py_BuildValue');
   Py_Initialize             := Import('Py_Initialize');
   PyDict_New                := Import('PyDict_New');
@@ -6025,17 +6027,19 @@ begin
       seq_length := PySequence_Length( obj );
       // if we have at least one object in the sequence,
       if seq_length > 0 then
+      begin
         // we try to get the first one, simply to test if the sequence API
         // is really implemented.
         Py_XDecRef( PySequence_GetItem( obj, 0 ) );
-      // check if the Python object did really implement the sequence API
-      if PyErr_Occurred = nil then
+        // check if the Python object did really implement the sequence API
+        if PyErr_Occurred = nil then
         begin
           // Convert a Python sequence into an array of Variant
           Result := VarArrayCreate( [0, seq_length-1], varVariant );
           for i := 0 to PySequence_Length( obj )-1 do
             Result[i] := GetSequenceItem( obj, i );
         end
+      end
       else // the object didn't implement the sequence API, so we return Null
         begin
           PyErr_Clear;
@@ -8430,7 +8434,11 @@ end;
 
 procedure FreeSubtypeInst(ob:PPyObject);
 begin
-  GetPythonEngine.PyObject_Free(ob);
+  try
+    GetPythonEngine.PyObject_Free(ob);
+  except
+    ; // rlc: Engine may have finalized externally
+  end;
 end;
 
 
