@@ -3547,7 +3547,7 @@ end;
 procedure TPythonInterface.AfterLoad;
 begin
   inherited;
-  FIsPython3000 := Pos('PYTHON3', UpperCase(DLLName)) = 1;
+  FIsPython3000 := Pos('PYTHON3', UpperCase(DLLName)) > 0;
   {$IFDEF WINDOWS}
   FMajorVersion := StrToInt(DLLName[7{$IFDEF LINUX}+3{$ENDIF}]);
   FMinorVersion := StrToInt(DLLName[8{$IFDEF LINUX}+3{$ENDIF}]);
