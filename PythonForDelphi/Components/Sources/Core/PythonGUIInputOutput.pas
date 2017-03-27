@@ -47,9 +47,9 @@ interface
 
 uses
 {$IFDEF MSWINDOWS}
-  Windows, Messages,
+  Windows, Messages, Dialogs,
 {$ENDIF}
-  SysUtils, Classes;//, Graphics, Controls, Forms, Dialogs,
+  SysUtils, Classes,
   StdCtrls, PythonEngine;
 
 {$IFDEF MSWINDOWS}
