@@ -1485,6 +1485,7 @@ type
     function  GetQuitMessage : String; virtual;
     procedure DoOpenDll(const aDllName : String); virtual;
     function  GetDllPath : String;
+    procedure setUseLastKnownVersion(aValue : boolean);
 
   public
     // Constructors & Destructors
@@ -1509,7 +1510,7 @@ type
     property RegVersion : String read FRegVersion write FRegVersion stored IsRegVersionStored;
     property FatalAbort :  Boolean read FFatalAbort write FFatalAbort default True;
     property FatalMsgDlg : Boolean read FFatalMsgDlg write FFatalMsgDlg default True;
-    property UseLastKnownVersion: Boolean read FUseLastKnownVersion write FUseLastKnownVersion default True;
+    property UseLastKnownVersion: Boolean read FUseLastKnownVersion write setUseLastKnownVersion default True;
     property OnAfterLoad : TNotifyEvent read FOnAfterLoad write FOnAfterLoad;
     property OnBeforeLoad : TNotifyEvent read FOnBeforeLoad write FOnBeforeLoad;
     property OnBeforeUnload : TNotifyEvent read FOnBeforeUnload write FOnBeforeUnload;
@@ -3365,6 +3366,14 @@ begin
     then Result := IncludeTrailingPathDelimiter(Result);
 end;
 
+
+procedure TDynamicDll.setUseLastKnownVersion(aValue : boolean);
+begin
+  FUseLastKnownVersion := aValue;
+  if aValue
+    then DetectLastKnownVersion;
+end;
+
 procedure  TDynamicDll.OpenDll(const aDllName : String);
 var
   s : String;
@@ -3406,13 +3415,9 @@ begin
   FFatalMsgDlg          := True;
   FFatalAbort           := True;
   FAutoLoad             := True;
-  FUseLastKnownVersion  := True;
+  FAutoUnload           := True;
 
-  i := COMPILED_FOR_PYTHON_VERSION_INDEX;
-  DllName     := PYTHON_KNOWN_VERSIONS[i].DllName;
-  FAPIVersion := PYTHON_KNOWN_VERSIONS[i].APIVersion;
-  FRegVersion := PYTHON_KNOWN_VERSIONS[i].RegVersion;
-  FAutoUnload := True;
+  setUseLastKnownVersion(True);
 end;
 
 destructor TDynamicDll.Destroy;
@@ -3423,9 +3428,9 @@ begin
 end;
 
 procedure TDynamicDll.DetectLastKnownVersion;
-{$IFDEF MSWINDOWS}
 var
   i : integer;
+{$IFDEF MSWINDOWS}
   s : string;
   b : boolean;
 {$ENDIF}
@@ -3443,7 +3448,15 @@ begin
     end;
   end;
 
+  {$ELSE}
+
+  i := COMPILED_FOR_PYTHON_VERSION_INDEX;
+  DllName     := PYTHON_KNOWN_VERSIONS[i].DllName;
+  FAPIVersion := PYTHON_KNOWN_VERSIONS[i].APIVersion;
+  FRegVersion := PYTHON_KNOWN_VERSIONS[i].RegVersion;
+
   {$ENDIF}
+
 end;
 
 function TDynamicDll.Import(const funcname: AnsiString; canFail : Boolean = True): Pointer;
@@ -3466,9 +3479,6 @@ end;
 procedure TDynamicDll.Loaded;
 begin
   inherited;
-
-  if UseLastKnownVersion and not (csDesigning in ComponentState) then
-    DetectLastKnownVersion;
 
   if AutoLoad and not (csDesigning in ComponentState) then
     LoadDll;
