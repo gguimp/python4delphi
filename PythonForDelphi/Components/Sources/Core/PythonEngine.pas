@@ -1494,6 +1494,7 @@ type
     // Public methods
     procedure OpenDll(const aDllName : String);
     function  IsHandleValid : Boolean;
+    procedure DetectLastKnownVersion;
     procedure LoadDll;
     procedure UnloadDll;
     procedure Quit;
@@ -2079,9 +2080,6 @@ type
   function PyString_AsDelphiString( ob: PPyObject): string;  virtual; abstract;
   procedure Py_FlushLine; cdecl;
 
-  // Constructors & Destructors
-  constructor Create(AOwner: TComponent); override;
-
   // Public methods
   procedure MapDll;
 
@@ -2189,7 +2187,6 @@ type
     function  GetClients( idx : Integer ) : TEngineClient;
     procedure Notification(AComponent: TComponent;
       Operation: TOperation); override;
-    procedure CheckRegistry;
     procedure SetProgramArgs;
     procedure InitWinConsole;
     procedure SetUseWindowsConsole( const Value : Boolean );
@@ -3360,15 +3357,12 @@ begin
   Result := DllPath;
 
   {$IFDEF MSWINDOWS}
-  if DLLPath = '' then begin
-    IsPythonVersionRegistered(RegVersion, Result, AllUserInstall);
-  end;
+  if Result = ''
+    then IsPythonVersionRegistered(RegVersion, Result, AllUserInstall);
   {$ENDIF}
 
-  if Result <> '' then
-  begin
-    Result := IncludeTrailingPathDelimiter(Result);
-  end;
+  if Result <> ''
+    then Result := IncludeTrailingPathDelimiter(Result);
 end;
 
 procedure  TDynamicDll.OpenDll(const aDllName : String);
@@ -3405,12 +3399,20 @@ begin
 end;
 
 constructor TDynamicDll.Create(AOwner: TComponent);
+var
+  i : integer;
 begin
   inherited;
   FFatalMsgDlg          := True;
   FFatalAbort           := True;
   FAutoLoad             := True;
   FUseLastKnownVersion  := True;
+
+  i := COMPILED_FOR_PYTHON_VERSION_INDEX;
+  DllName     := PYTHON_KNOWN_VERSIONS[i].DllName;
+  FAPIVersion := PYTHON_KNOWN_VERSIONS[i].APIVersion;
+  FRegVersion := PYTHON_KNOWN_VERSIONS[i].RegVersion;
+  FAutoUnload := True;
 end;
 
 destructor TDynamicDll.Destroy;
@@ -3418,6 +3420,30 @@ begin
   if AutoUnload then
     UnloadDll;
   inherited;
+end;
+
+procedure TDynamicDll.DetectLastKnownVersion;
+{$IFDEF MSWINDOWS}
+var
+  i : integer;
+  s : string;
+  b : boolean;
+{$ENDIF}
+begin
+ {$IFDEF MSWINDOWS}
+
+  for i := high(PYTHON_KNOWN_VERSIONS) downto 1 do
+  begin
+    if IsPythonVersionRegistered(PYTHON_KNOWN_VERSIONS[i].RegVersion,s,b)  then
+    begin
+      DllName     := PYTHON_KNOWN_VERSIONS[i].DllName;
+      FAPIVersion := PYTHON_KNOWN_VERSIONS[i].APIVersion;
+      FRegVersion := PYTHON_KNOWN_VERSIONS[i].RegVersion;
+      exit;
+    end;
+  end;
+
+  {$ENDIF}
 end;
 
 function TDynamicDll.Import(const funcname: AnsiString; canFail : Boolean = True): Pointer;
@@ -3440,6 +3466,10 @@ end;
 procedure TDynamicDll.Loaded;
 begin
   inherited;
+
+  if UseLastKnownVersion and not (csDesigning in ComponentState) then
+    DetectLastKnownVersion;
+
   if AutoLoad and not (csDesigning in ComponentState) then
     LoadDll;
 end;
@@ -3532,23 +3562,12 @@ end;
 (**                                                   **)
 (*******************************************************)
 
-constructor TPythonInterface.Create(AOwner: TComponent);
-var
-  i : Integer;
-begin
-  inherited;
-  i := COMPILED_FOR_PYTHON_VERSION_INDEX;
-  DllName     := PYTHON_KNOWN_VERSIONS[i].DllName;
-  FAPIVersion := PYTHON_KNOWN_VERSIONS[i].APIVersion;
-  FRegVersion := PYTHON_KNOWN_VERSIONS[i].RegVersion;
-  FAutoUnload := True;
-end;
 
 procedure TPythonInterface.AfterLoad;
 begin
   inherited;
   FIsPython3000 := Pos('PYTHON3', UpperCase(DLLName)) > 0;
-  {$IFDEF WINDOWS}
+  {$IFDEF MSWINDOWS}
   FMajorVersion := StrToInt(DLLName[7{$IFDEF LINUX}+3{$ENDIF}]);
   FMinorVersion := StrToInt(DLLName[8{$IFDEF LINUX}+3{$ENDIF}]);
   {$ELSE}
@@ -4720,24 +4739,32 @@ procedure TPythonEngine.DoOpenDll(const aDllName : String);
 var
   i : Integer;
 begin
+  {$IFNDEF MSWINDOWS}
+
   if UseLastKnownVersion then
-    for i:= Integer(COMPILED_FOR_PYTHON_VERSION_INDEX) to High(PYTHON_KNOWN_VERSIONS) do
+    for i:= High(PYTHON_KNOWN_VERSIONS) downto Integer(COMPILED_FOR_PYTHON_VERSION_INDEX) do
     begin
+      if not PYTHON_KNOWN_VERSIONS[i].CanUseLatest then
+        Break;
+
       RegVersion := PYTHON_KNOWN_VERSIONS[i].RegVersion;
       try
         FDLLHandle := SafeLoadLibrary(GetDllPath+PYTHON_KNOWN_VERSIONS[i].DllName);
       except
         FDLLHandle:=0;
       end;
+
       if IsHandleValid then
       begin
         DllName := PYTHON_KNOWN_VERSIONS[i].DllName;
         APIVersion := PYTHON_KNOWN_VERSIONS[i].APIVersion;
         Exit;
       end;
-      if not PYTHON_KNOWN_VERSIONS[i].CanUseLatest then
-        Break;
+
     end;
+
+  {$ENDIF}
+
   inherited;
 end;
 
@@ -4843,7 +4870,6 @@ begin
   {$ENDIF}
 
   gPythonEngine := Self;
-  CheckRegistry;
   if IsPython3000 then begin
     if Assigned(Py_SetProgramName3000) then
     begin
@@ -4945,49 +4971,6 @@ begin
     end;
 end;
 
-procedure TPythonEngine.CheckRegistry;
-{$IFDEF MSWINDOWS}
-var
-  key : String;
-  path : String;
-{$ENDIF}
-begin
-{$IFDEF MSWINDOWS}
-  try
-    with TRegistry.Create(KEY_READ and not KEY_NOTIFY) do
-      try
-        //Access := KEY_READ; // works only with Delphi5 or greater
-        RootKey := HKEY_LOCAL_MACHINE;
-        key := Format('\Software\Python\PythonCore\%s\PythonPath', [RegVersion]);
-        if not KeyExists( key ) then
-          begin
-            // try a current user installation
-            RootKey := HKEY_CURRENT_USER;
-            if not KeyExists( key ) then
-            begin
-              if Assigned( FOnPathInitialization ) then
-                begin
-                  path := '';
-                  FOnPathInitialization( Self, path );
-                  if path <> '' then
-                    begin
-                      //Access := KEY_ALL_ACCESS; // works only with Delphi5 or greater
-                      OpenKey( key, True );
-                      WriteString( '', path );
-                      CloseKey;
-                    end;
-                end;
-            end;
-          end;
-      finally
-        Free;
-      end;
-  except
-    // under WinNT, with a user without admin rights, the access to the
-    // LocalMachine keys would raise an exception.
-  end;
-{$ENDIF}
-end;
 
 procedure TPythonEngine.SetProgramArgs;
 var
@@ -9743,6 +9726,23 @@ begin
 end;
 
 {$IFDEF MSWINDOWS}
+
+
+function TryGetKeyFromRegistry(aRegistry : TRegistry; aRootKey : integer; Key : string; out InstallPath: string) : boolean;
+begin
+  try
+    aRegistry.RootKey := aRootKey;
+    if aRegistry.KeyExists(key) then
+    begin
+      aRegistry.OpenKey(Key, False);
+      InstallPath := aRegistry.ReadString('');
+      Result := True;
+    end;
+  except
+    // WinXP raise error on RootKey := HKEY_LOCAL_MACHINE with a user that has no administration rights
+  end;
+end;
+
 function IsPythonVersionRegistered(PythonVersion : string;
   out InstallPath: string; out AllUserInstall: Boolean) : Boolean;
   // Python provides for All user and Current user installations
@@ -9753,38 +9753,32 @@ function IsPythonVersionRegistered(PythonVersion : string;
   // Hence, for Current user installations we need to try and find the install path
   // since it may not be on the system path.
 var
-  key: string;
+  key1: string;
+  key2: string;
+  aRegistry : TRegistry;
 begin
-  Result := False;
   InstallPath := '';
-  AllUserInstall := False;
+
+  key1 := Format('\Software\Python\PythonCore\%s\InstallPath', [PythonVersion]);
+  key2 := Format('\Software\Wow6432Node\Python\PythonCore\%s\InstallPath', [PythonVersion]);
+
+  aRegistry := TRegistry.Create(KEY_READ and not KEY_NOTIFY or KEY_WOW64_32KEY);
   try
-    key := Format('\Software\Python\PythonCore\%s\InstallPath', [PythonVersion]);
-    with TRegistry.Create(KEY_READ and not KEY_NOTIFY) do
-      try
-        RootKey := HKEY_LOCAL_MACHINE;
-        if KeyExists(key) then begin
-          AllUserInstall := True;
-          Result := True;
-        end;
-      finally
-        Free;
-      end;
-  except
+    AllUserInstall := True;
+    Result  :=  TryGetKeyFromRegistry(aRegistry, HKEY_LOCAL_MACHINE, Key1, InstallPath);
+    if Result then exit;
+    Result  :=  TryGetKeyFromRegistry(aRegistry, HKEY_LOCAL_MACHINE, Key2, InstallPath);
+    if Result then exit;
+
+    AllUserInstall := False;
+    Result  :=  TryGetKeyFromRegistry(aRegistry, HKEY_CURRENT_USER, Key1, InstallPath);
+    if Result then exit;
+    Result  :=  TryGetKeyFromRegistry(aRegistry, HKEY_CURRENT_USER, Key2, InstallPath);
+    if Result then exit;
+  finally
+    aRegistry.Free;
   end;
-  // We do not seem to have an All User Python Installation.
-  // Check whether we have a current user installation
-  if not AllUserInstall then
-    with TRegistry.Create(KEY_READ and not KEY_NOTIFY) do
-      try
-        RootKey := HKEY_CURRENT_USER;
-        if OpenKey(Key, False) then begin
-          InstallPath := ReadString('');
-          Result := True;
-        end;
-      finally
-        Free;
-      end;
+
 end;
 {$ENDIF}
 
